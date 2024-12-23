@@ -1,6 +1,6 @@
 module github.com/davejbax/pixie
 
-go 1.23
+go 1.23.4
 
 require (
 	github.com/mholt/archiver/v4 v4.0.0-alpha.9
@@ -21,6 +21,7 @@ require (
 	github.com/hashicorp/golang-lru/v2 v2.0.7 // indirect
 	github.com/klauspost/compress v1.17.11 // indirect
 	github.com/klauspost/pgzip v1.2.6 // indirect
+	github.com/lunixbochs/struc v0.0.0-20241101090106-8d528fa2c543 // indirect
 	github.com/nwaples/rardecode/v2 v2.0.0-beta.4 // indirect
 	github.com/pierrec/lz4/v4 v4.1.21 // indirect
 	github.com/sorairolake/lzip-go v0.3.5 // indirect

@@ -4,4 +4,5 @@ import "io"
 
 type Bootloader interface {
 	Entrypoint() io.Reader
+	EntrypointPath() string
 }

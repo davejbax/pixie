@@ -1,6 +1,7 @@
 package tftp
 
 import (
+	"errors"
 	"io"
 
 	"github.com/davejbax/pixie/internal/bootloader"
@@ -8,17 +9,34 @@ import (
 )
 
 type Server struct {
-	tftp       *pintftp.Server
-	bootloader bootloader.Bootloader
+	tftp        *pintftp.Server
+	bootloaders map[string]bootloader.Bootloader
 }
 
-func NewServer(bl bootloader.Bootloader) *Server {
+var errFileNotFound = errors.New("requested file not found")
+
+func NewServer(bootloaders []bootloader.Bootloader) *Server {
+	// TODO: tell user off if they give no bootloaders here
+	bootloadersByEntrypointPath := make(map[string]bootloader.Bootloader)
+	for _, bl := range bootloaders {
+		bootloadersByEntrypointPath[bl.EntrypointPath()] = bl
+	}
+
 	srv := &Server{
-		bootloader: bl,
+		bootloaders: bootloadersByEntrypointPath,
 	}
 
 	srv.tftp = pintftp.NewServer(srv.handleRead, nil)
+
+	return srv
 }
 
-func (*Server) handleRead(filename string, rf io.ReaderFrom) error {
+func (s *Server) handleRead(filename string, rf io.ReaderFrom) error {
+	bl, ok := s.bootloaders[filename]
+	if !ok {
+		return errFileNotFound
+	}
+
+	_, err := rf.ReadFrom(bl.Entrypoint())
+	return err
 }
