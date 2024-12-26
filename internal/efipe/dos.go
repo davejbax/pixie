@@ -1,4 +1,4 @@
-package pe
+package efipe
 
 import (
 	"bytes"
@@ -77,7 +77,7 @@ type dosImage struct {
 	program []byte
 }
 
-func newDOSImage(program []byte, programAlignment int) *dosImage {
+func newDOSImage(program []byte, peStartAddr uint32) *dosImage {
 	numPages := int(math.Ceil(float64(len(program)) / float64(pageSizeBytes)))
 	lastPageSize := numPages*pageSizeBytes - len(program)
 
@@ -110,7 +110,7 @@ func newDOSImage(program []byte, programAlignment int) *dosImage {
 
 	// Align to the closest boundary that's divisible by programAlignment
 	// Pad with zeros until this point
-	header.PEHeaderStartAddr = uint32(math.Ceil(float64(dosHeaderSizeBytes+len(program))/float64(programAlignment))) * uint32(programAlignment)
+	header.PEHeaderStartAddr = peStartAddr
 
 	return &dosImage{
 		header:  header,
