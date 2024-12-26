@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 )
@@ -68,4 +70,44 @@ func (d moduleDependencies) Resolve(modules []string) ([]string, error) {
 	}
 
 	return allDependencies, nil
+}
+
+type ObjType uint32
+
+const (
+	ObjTypeElf ObjType = iota
+	ObjTypeMemdisk
+	ObjTypeConfig
+	ObjTypePrefix
+	ObjTypePubKey
+	ObjTypeDTB
+	ObjTypeDisableShimLock
+	ObjTypeGPGPubKey
+	ObjTypeX509PubKey
+)
+
+type Module struct {
+	objType ObjType
+	size    uint32
+	reader  io.ReadCloser
+}
+
+func ReadModuleFromDirectory(directory string, module string) (*Module, error) {
+	path := filepath.Join(directory, module+".mod")
+
+	stat, err := os.Stat(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to stat module '%s' from path '%s': %w", module, path, err)
+	}
+
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("could not open module '%s' from path '%s': %w", module, path, err)
+	}
+
+	return &Module{
+		objType: ObjTypeElf, // TODO: make this a param? Do we ever want to read a non-elf file from disk?
+		size:    uint32(stat.Size()),
+		reader:  file,
+	}, err
 }
