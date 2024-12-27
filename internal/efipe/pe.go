@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/davejbax/pixie/internal/align"
+	"github.com/davejbax/pixie/internal/iometa"
 	"github.com/lunixbochs/struc"
 )
 
@@ -223,20 +224,34 @@ func (i *Image) WriteTo(w io.Writer) (int64, error) {
 	}
 
 	for _, section := range sections {
+		// Sections aren't necessarily contiguous and generally start on some power-of-two boundary.
+		// Hence, we need to write zeros until we reach the start of the section.
 		bytesUntilSection := int(section.Header().Offset) - cw.BytesWritten()
 		if bytesUntilSection < 0 {
 			return int64(cw.BytesWritten()), errSectionOffsetInvalid
 		} else if bytesUntilSection > 0 {
-			// TODO: make a zero reader that stops us from having to make empty byte arrays...
-			// this is VERY memory inefficient right now!
-			if _, err := cw.Write(make([]byte, bytesUntilSection)); err != nil {
-				return int64(cw.BytesWritten()), fmt.Errorf("failed to write padding before section: %w", err)
+			if err := iometa.WriteZeros(cw, bytesUntilSection); err != nil {
+				return int64(cw.BytesWritten()), fmt.Errorf("failed to write zero padding before section: %w", err)
 			}
 		}
 
 		reader := section.Open()
-		io.Copy(cw, reader)
+		if _, err := io.Copy(cw, reader); err != nil {
+			return int64(cw.BytesWritten()), fmt.Errorf("failed to write PE section '%s': %w", section.Header().Name, err)
+		}
+
 		_ = reader.Close()
+	}
+
+	// The section end was probably aligned to some boundary, and this might be more data than they give us.
+	// If that's the case, pad it with zeros.
+	// TODO: should this be the responsibility of the section provider?
+	lastSection := sections[len(sections)-1]
+	bytesRemaining := int(lastSection.Header().Offset) + int(lastSection.Header().Size) - cw.BytesWritten()
+	if bytesRemaining > 0 {
+		if err := iometa.WriteZeros(cw, bytesRemaining); err != nil {
+			return int64(cw.BytesWritten()), fmt.Errorf("failed to write final zero padding: %w", err)
+		}
 	}
 
 	return int64(cw.BytesWritten()), nil

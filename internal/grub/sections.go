@@ -9,6 +9,7 @@ import (
 
 	"github.com/davejbax/pixie/internal/align"
 	"github.com/davejbax/pixie/internal/efipe"
+	"github.com/davejbax/pixie/internal/iometa"
 )
 
 type elfSection struct {
@@ -103,6 +104,9 @@ func createVirtualSection(addr uint64, sourceSections []*elfSection, alignment u
 
 		addr += section.Size
 	}
+
+	// Align the end of the section to the given alignment as well
+	addr = align.Address(addr, alignment)
 
 	virt.size = addr - virt.offset
 	virt.realSections = relocatedSections
@@ -236,7 +240,11 @@ func (r *virtualSectionReader) Read(output []byte) (int, error) {
 		}
 
 		if r.handle == nil {
-			r.handle = r.virt.realSections[r.index].Open()
+			if r.virt.kind == virtualSectionTypeBSS {
+				r.handle = &iometa.ZeroReader{Size: int(r.virt.realSections[r.index].Size)}
+			} else {
+				r.handle = r.virt.realSections[r.index].Open()
+			}
 		}
 
 		read, err := r.handle.Read(output)
