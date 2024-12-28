@@ -168,17 +168,24 @@ func NewPrefixModule(prefix string) *Module {
 }
 
 type moduleSection struct {
-	data   []byte
+	mods []*Module
+
 	offset uint32
-	vsize  uint32
+
+	// Actual size of module info + all module headers + all module payloads
+	realSize uint64
+
+	// The size we're claiming the section is. This will generally be padded so as to align
+	// to a 4k boundary.
+	virtualSize uint32
 }
 
 func (s *moduleSection) Header() pe.SectionHeader {
 	return pe.SectionHeader{
 		Name:                 sectionMods,
-		VirtualSize:          s.vsize,
+		VirtualSize:          s.virtualSize,
 		VirtualAddress:       s.offset,
-		Size:                 s.vsize,
+		Size:                 s.virtualSize,
 		Offset:               s.offset,
 		PointerToRelocations: 0,
 		PointerToLineNumbers: 0,
@@ -189,45 +196,48 @@ func (s *moduleSection) Header() pe.SectionHeader {
 }
 
 // TODO make WriterTos instead of Readers!
-func (s *moduleSection) Open() io.ReadCloser {
-	return &iometa.Closifier{Reader: bytes.NewReader(s.data)}
-}
-
-func newModuleSection(mods []*Module, offset uint32, alignment uint32) (*moduleSection, error) {
-	w := &bytes.Buffer{}
-
-	size := uint64(0)
-	for _, mod := range mods {
-		size += uint64(mod.payloadSize) + moduleHeaderStructSize
-	}
+func (s *moduleSection) WriteTo(w io.Writer) (int64, error) {
+	cw := &iometa.CountingWriter{Writer: w}
 
 	info := &moduleInfo{
 		Magic:   moduleInfoMagic,
 		Padding: 0,
 		Offset:  moduleInfoStructSize,
-		Size:    moduleInfoStructSize + size,
+		Size:    s.realSize,
 	}
 
-	if err := struc.PackWithOptions(w, info, &struc.Options{Order: binary.LittleEndian}); err != nil {
-		return nil, err
+	if err := struc.PackWithOptions(cw, info, &struc.Options{Order: binary.LittleEndian}); err != nil {
+		return int64(cw.BytesWritten()), err
 	}
 
-	for _, mod := range mods {
+	for _, mod := range s.mods {
 		header := &moduleHeader{Typ: mod.objType, Size: moduleHeaderStructSize + mod.payloadSize}
-		if err := struc.PackWithOptions(w, header, &struc.Options{Order: binary.LittleEndian}); err != nil {
-			return nil, err
+		if err := struc.PackWithOptions(cw, header, &struc.Options{Order: binary.LittleEndian}); err != nil {
+			return int64(cw.BytesWritten()), err
 		}
 
 		payload, err := mod.open()
 		if err != nil {
-			return nil, fmt.Errorf("failed to open module for reading: %w", err)
+			return int64(cw.BytesWritten()), fmt.Errorf("failed to open module for reading: %w", err)
 		}
 		defer payload.Close()
 
-		if _, err := io.Copy(w, payload); err != nil {
-			return nil, fmt.Errorf("failed to read module payload: %w", err)
+		if _, err := io.Copy(cw, payload); err != nil {
+			return int64(cw.BytesWritten()), fmt.Errorf("failed to read module payload: %w", err)
 		}
 	}
 
-	return &moduleSection{data: w.Bytes(), offset: offset, vsize: align.Address(uint32(w.Len()), alignment)}, nil
+	return int64(cw.BytesWritten()), nil
+}
+
+func newModuleSection(mods []*Module, offset uint32, alignment uint32) (*moduleSection, error) {
+	totalSize := uint64(0)
+	for _, mod := range mods {
+		totalSize += uint64(mod.payloadSize) + moduleHeaderStructSize
+	}
+	totalSize += moduleInfoStructSize
+
+	virtualSize := align.Address(offset+uint32(totalSize), alignment) - offset
+
+	return &moduleSection{mods: mods, offset: offset, realSize: totalSize, virtualSize: virtualSize}, nil
 }

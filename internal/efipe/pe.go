@@ -257,8 +257,7 @@ func (i *Image) WriteTo(w io.Writer) (int64, error) {
 			}
 		}
 
-		reader := section.Open()
-		written, err := io.Copy(cw, reader)
+		written, err := section.WriteTo(cw)
 		if err != nil {
 			return int64(cw.BytesWritten()), fmt.Errorf("failed to write PE section '%s': %w", section.Header().Name, err)
 		}
@@ -267,8 +266,6 @@ func (i *Image) WriteTo(w io.Writer) (int64, error) {
 			"count", written,
 			"section", section.Header().Name,
 		)
-
-		_ = reader.Close()
 	}
 
 	// The section end was probably aligned to some boundary, and this might be more data than they give us.
@@ -297,7 +294,7 @@ func sectionName(name string) [8]uint8 {
 }
 
 type Section interface {
-	Open() io.ReadCloser
+	io.WriterTo
 	Header() pe.SectionHeader
 }
 

@@ -247,63 +247,42 @@ func (s *virtualSection) Header() pe.SectionHeader {
 	}
 }
 
-func (s *virtualSection) Open() io.ReadCloser {
-	return &virtualSectionReader{virt: s}
-}
+func (s *virtualSection) WriteTo(w io.Writer) (int64, error) {
+	cw := &iometa.CountingWriter{Writer: w}
 
-type virtualSectionReader struct {
-	virt   *virtualSection
-	index  int
-	handle io.Reader
-}
+	initialAddr := s.realSections[0].addrInFile
 
-func (r *virtualSectionReader) Read(output []byte) (int, error) {
-	totalRead := 0
-	for {
-		if r.index >= len(r.virt.realSections) {
-			return totalRead, io.EOF
+	for _, section := range s.realSections {
+		// If there's padding before the start of this section, write it now
+		if uint64(cw.BytesWritten()) < section.addrInFile-initialAddr {
+			iometa.WriteZeros(cw, int(section.addrInFile-initialAddr)-cw.BytesWritten())
 		}
 
-		if r.handle == nil {
-			section := r.virt.realSections[r.index]
+		var sectionData io.Reader
 
-			if section.Type == elf.SHT_NOBITS {
-				r.handle = &iometa.ZeroReader{Size: int(section.Size)}
-			} else {
-				// If we have relocations, do them now. This will (as is necessitated
-				// by the nature of doing these relocations) read the entire section
-				// into memory.
-				if len(section.relocations) > 0 {
-					handle, err := newRelocationReader(section)
-					if err != nil {
-						return 0, fmt.Errorf("failed to apply relocations to section: %w", err)
-					}
-
-					r.handle = handle
-				} else {
-					// If no relocations, we can read directly from the section
-					r.handle = section.Open()
+		if section.Type == elf.SHT_NOBITS {
+			sectionData = &iometa.ZeroReader{Size: int(section.Size)}
+		} else {
+			// If we have relocations, do them now. This will (as is necessitated
+			// by the nature of doing these relocations) read the entire section
+			// into memory.
+			if len(section.relocations) > 0 {
+				var err error
+				sectionData, err = newRelocationReader(section)
+				if err != nil {
+					return int64(cw.BytesWritten()), fmt.Errorf("failed to apply relocations to section: %w", err)
 				}
+			} else {
+				// If no relocations, we can read directly from the section
+				sectionData = section.Open()
 			}
 		}
 
-		read, err := r.handle.Read(output)
-		totalRead += read
-		eof := errors.Is(err, io.EOF)
-
-		if eof {
-			output = output[read:]
-			r.index++
-			r.handle = nil
-			continue
-		} else if err != nil {
-			return totalRead, fmt.Errorf("failed to read ELF section '%s': %w", r.virt.realSections[r.index].Name, err)
+		_, err := io.Copy(cw, sectionData)
+		if err != nil {
+			return int64(cw.BytesWritten()), fmt.Errorf("failed to write data from section '%s': %w", section.Name, err)
 		}
-
-		return totalRead, nil
 	}
-}
 
-func (r *virtualSectionReader) Close() error {
-	return nil
+	return int64(cw.BytesWritten()), nil
 }

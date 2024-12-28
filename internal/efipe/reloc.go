@@ -1,7 +1,6 @@
 package efipe
 
 import (
-	"bytes"
 	"debug/pe"
 	"encoding/binary"
 	"fmt"
@@ -73,8 +72,9 @@ func (b *relocationBlock) WriteTo(w io.Writer) (int64, error) {
 }
 
 type relocationSection struct {
-	data   []byte
+	blocks []*relocationBlock
 	offset uint32
+	size   uint32
 }
 
 var _ Section = &relocationSection{}
@@ -132,12 +132,37 @@ func newRelocationSection(relocs []*Relocation, offset uint32) *relocationSectio
 		blocks[len(blocks)-1].blockSize += endPadding
 	}
 
-	data := bytes.NewBuffer(make([]byte, 0, totalSize))
-	for i, block := range blocks {
-		written, err := block.WriteTo(data)
+	return &relocationSection{
+		blocks: blocks,
+		size:   alignedTotalSize,
+		offset: offset,
+	}
+}
+
+func (s *relocationSection) Header() pe.SectionHeader {
+	return pe.SectionHeader{
+		Name:           sectionReloc,
+		VirtualSize:    s.size,
+		VirtualAddress: s.offset,
+		Size:           s.size,
+		Offset:         s.offset,
+
+		// These fields are all unused for executables or otherwise deprecated
+		PointerToRelocations: 0,
+		PointerToLineNumbers: 0,
+		NumberOfRelocations:  0,
+		NumberOfLineNumbers:  0,
+
+		Characteristics: pe.IMAGE_SCN_CNT_INITIALIZED_DATA | pe.IMAGE_SCN_MEM_DISCARDABLE | pe.IMAGE_SCN_MEM_READ,
+	}
+}
+
+func (s *relocationSection) WriteTo(w io.Writer) (int64, error) {
+	cw := &iometa.CountingWriter{Writer: w}
+	for i, block := range s.blocks {
+		written, err := block.WriteTo(cw)
 		if err != nil {
-			// TODO proper error handling here
-			panic(err)
+			return int64(cw.BytesWritten()), fmt.Errorf("failed to write PE relocation block %d: %w", i, err)
 		}
 
 		if written != int64(block.blockSize) {
@@ -152,31 +177,5 @@ func newRelocationSection(relocs []*Relocation, offset uint32) *relocationSectio
 		)
 	}
 
-	return &relocationSection{
-		data:   data.Bytes(),
-		offset: offset,
-	}
-}
-
-func (s *relocationSection) Header() pe.SectionHeader {
-	end := align.Address(s.offset+uint32(len(s.data)), UEFIPageSize)
-	return pe.SectionHeader{
-		Name:           sectionReloc,
-		VirtualSize:    end - s.offset,
-		VirtualAddress: s.offset,
-		Size:           end - s.offset,
-		Offset:         s.offset,
-
-		// These fields are all unused for executables or otherwise deprecated
-		PointerToRelocations: 0,
-		PointerToLineNumbers: 0,
-		NumberOfRelocations:  0,
-		NumberOfLineNumbers:  0,
-
-		Characteristics: pe.IMAGE_SCN_CNT_INITIALIZED_DATA | pe.IMAGE_SCN_MEM_DISCARDABLE | pe.IMAGE_SCN_MEM_READ,
-	}
-}
-
-func (s *relocationSection) Open() io.ReadCloser {
-	return &iometa.Closifier{Reader: bytes.NewReader(s.data)}
+	return int64(cw.BytesWritten()), nil
 }
