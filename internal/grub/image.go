@@ -56,6 +56,10 @@ func NewImage(r io.ReaderAt, headerSize uint64, alignment uint64) (*image, error
 		return nil, fmt.Errorf("failed to relocate symbols: %w", err)
 	}
 
+	if err := relocateAddresses(elfFile, virtualSections, symbs); err != nil {
+		return nil, fmt.Errorf("failed to relocate addresses: %w", err)
+	}
+
 	foundStart := false
 	for _, symb := range symbs {
 		if symb.Name == symbStart {
@@ -66,13 +70,6 @@ func NewImage(r io.ReaderAt, headerSize uint64, alignment uint64) (*image, error
 
 	if !foundStart {
 		return nil, errNoEntrypoint
-	}
-
-	// TODO: Implement instruction relocation
-	for _, section := range elfFile.Sections {
-		if section.Type == elf.SHT_REL || section.Type == elf.SHT_RELA {
-			panic(fmt.Sprintf("section '%s' has relocation information; relocation is not implemented yet", section.Name))
-		}
 	}
 
 	lastSection := virtualSections[len(virtualSections)-1]

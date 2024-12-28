@@ -20,6 +20,9 @@ type elfSection struct {
 
 	// Address relative to the start of the image file
 	addrInFile uint64
+
+	relocationTypToFunc func(uint32) (f relocationFunc, ok bool)
+	relocations         []*relocation
 }
 
 // type elfSectionList []*elfSection
@@ -118,6 +121,7 @@ var errBSSSymbolButNoBSSSection = errors.New("BSS symbol found but no BSS virtua
 
 // Create a new list of symbols where the symbols' values are relative to the start of the
 // image file we're producing, and also take into account the new section addresses
+// TODO: surely we want a []*elf.Symbol here?
 func relocateSymbols(f *elf.File, virtualSections []*virtualSection) ([]elf.Symbol, error) {
 	symbs, err := f.Symbols()
 	if err != nil {
@@ -145,6 +149,9 @@ func relocateSymbols(f *elf.File, virtualSections []*virtualSection) ([]elf.Symb
 	}
 
 	relocatedSymbs := make([]elf.Symbol, 0, len(symbs))
+
+	// Add in the undefined symbol: [elf.File.Symbols()] omits this!
+	relocatedSymbs = append(relocatedSymbs, elf.Symbol{})
 
 	for _, symb := range symbs {
 		if symb.Section == elf.SHN_UNDEF {
@@ -230,7 +237,7 @@ func (s *virtualSection) Open() io.ReadCloser {
 type virtualSectionReader struct {
 	virt   *virtualSection
 	index  int
-	handle io.ReadSeeker
+	handle io.Reader
 }
 
 func (r *virtualSectionReader) Read(output []byte) (int, error) {
@@ -240,10 +247,24 @@ func (r *virtualSectionReader) Read(output []byte) (int, error) {
 		}
 
 		if r.handle == nil {
+			section := r.virt.realSections[r.index]
+
 			if r.virt.kind == virtualSectionTypeBSS {
-				r.handle = &iometa.ZeroReader{Size: int(r.virt.realSections[r.index].Size)}
+				r.handle = &iometa.ZeroReader{Size: int(section.Size)}
 			} else {
-				r.handle = r.virt.realSections[r.index].Open()
+				r.handle = section.Open()
+
+				// If we have relocations, do them now. This will (as is necessitated
+				// by the nature of doing these relocations) read the entire section
+				// into memory.
+				if len(section.relocations) > 0 {
+					handle, err := newRelocationReader(r.handle, section)
+					if err != nil {
+						return 0, fmt.Errorf("failed to apply relocations to section: %w", err)
+					}
+
+					r.handle = handle
+				}
 			}
 		}
 
