@@ -3,28 +3,59 @@ package main
 import (
 	"fmt"
 	"log"
+	"log/slog"
 	"os"
 
+	"github.com/davejbax/pixie/internal/efipe"
 	"github.com/davejbax/pixie/internal/grub"
 )
 
 func main() {
+	handler := slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug})
+	s := slog.New(handler)
+	slog.SetDefault(s)
+
 	f, err := os.Open("kernel.img")
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	img, err := grub.NewImage(f, 512, 4096)
+	// headerSize := 512
+
+	img, err := grub.NewImage(f, 4096, 4096)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	buff, err := os.OpenFile("output.bin", os.O_CREATE|os.O_WRONLY, 0644)
+	// sects := img.Sections()
+	// sect, ok := sects.GetByName(efipe.SectionData)
+	// if !ok {
+	// 	log.Fatal("not ok")
+	// }
+
+	// r := sect.Open()
+	// debug := make([]byte, 16)
+	// var read int
+
+	// for err == nil {
+	// 	read, err = r.Read(debug)
+	// 	for _, byt := range debug {
+	// 		fmt.Printf("%02x ", byt)
+	// 	}
+	// 	fmt.Printf("(%d)\n", read)
+	// }
+
+	efiImg, err := efipe.New(img)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	written, err := img.WriteTo(buff)
+	buff, err := os.OpenFile("output.efi", os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	written, err := efiImg.WriteTo(buff)
 	if err != nil {
 		log.Fatal(err)
 	}

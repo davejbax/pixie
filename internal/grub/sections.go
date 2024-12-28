@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 
 	"github.com/davejbax/pixie/internal/align"
 	"github.com/davejbax/pixie/internal/efipe"
@@ -74,7 +75,9 @@ func layoutVirtualSections(f *elf.File, headerSize uint64, alignment uint64) []*
 				dataSections = append(dataSections, isection)
 			}
 		} else {
-			// TODO log ignored section here
+			slog.Warn("excluding section (not text/data/BSS)",
+				"section", section.Name,
+			)
 		}
 	}
 
@@ -82,11 +85,12 @@ func layoutVirtualSections(f *elf.File, headerSize uint64, alignment uint64) []*
 	// .data, then .bss
 	addr := uint64(headerSize)
 
-	virtualSections := make([]*virtualSection, 3)
+	virtualSections := make([]*virtualSection, 2)
 
 	virtualSections[0], addr = createVirtualSection(addr, textSections, alignment, virtualSectionTypeText)
+	dataSections = append(dataSections, bssSections...)
 	virtualSections[1], addr = createVirtualSection(addr, dataSections, alignment, virtualSectionTypeData)
-	virtualSections[2], addr = createVirtualSection(addr, bssSections, alignment, virtualSectionTypeBSS)
+	// virtualSections[2], addr = createVirtualSection(addr, bssSections, alignment, virtualSectionTypeBSS)
 
 	return virtualSections
 }
@@ -104,6 +108,11 @@ func createVirtualSection(addr uint64, sourceSections []*elfSection, alignment u
 		sectionWithAddr := *section
 		sectionWithAddr.addrInFile = addr
 		relocatedSections = append(relocatedSections, &sectionWithAddr)
+
+		slog.Debug("locating ELF section",
+			"section", sectionWithAddr.Name,
+			"addr", fmt.Sprintf("0x%02x", sectionWithAddr.addrInFile),
+		)
 
 		addr += section.Size
 	}
@@ -139,10 +148,10 @@ func relocateSymbols(f *elf.File, virtualSections []*virtualSection) ([]elf.Symb
 	for _, virt := range virtualSections {
 		for _, section := range virt.realSections {
 			sectionsByIndex[section.index] = section
-		}
 
-		if virt.kind == virtualSectionTypeBSS && bssStart == 0 {
-			bssStart = virt.offset
+			if section.Type == elf.SHT_NOBITS && bssStart == 0 {
+				bssStart = section.addrInFile
+			}
 		}
 
 		end = virt.offset + virt.size
@@ -153,7 +162,7 @@ func relocateSymbols(f *elf.File, virtualSections []*virtualSection) ([]elf.Symb
 	// Add in the undefined symbol: [elf.File.Symbols()] omits this!
 	relocatedSymbs = append(relocatedSymbs, elf.Symbol{})
 
-	for _, symb := range symbs {
+	for i, symb := range symbs {
 		if symb.Section == elf.SHN_UNDEF {
 			if symb.Name == symbBssStart {
 				// Ensure we do actually have a BSS section!
@@ -175,7 +184,15 @@ func relocateSymbols(f *elf.File, virtualSections []*virtualSection) ([]elf.Symb
 				return nil, fmt.Errorf("could not find section with index '%d' defined by symbol '%s'", symb.Section, symb.Name)
 			}
 
+			oldValue := symb.Value
 			symb.Value = section.addrInFile + symb.Value
+			slog.Debug("relocating symbol",
+				"symbol", symb.Name,
+				"index", i+1, // symbs here starts at 1 index, due to the [elf] package
+				"from", fmt.Sprintf("0x%02x", oldValue),
+				"to", fmt.Sprintf("0x%02x", symb.Value),
+				"section", section.Name,
+			)
 		}
 
 		relocatedSymbs = append(relocatedSymbs, symb)
@@ -241,34 +258,37 @@ type virtualSectionReader struct {
 }
 
 func (r *virtualSectionReader) Read(output []byte) (int, error) {
+	totalRead := 0
 	for {
 		if r.index >= len(r.virt.realSections) {
-			return 0, io.EOF
+			return totalRead, io.EOF
 		}
 
 		if r.handle == nil {
 			section := r.virt.realSections[r.index]
 
-			if r.virt.kind == virtualSectionTypeBSS {
+			if section.Type == elf.SHT_NOBITS {
 				r.handle = &iometa.ZeroReader{Size: int(section.Size)}
 			} else {
-				r.handle = section.Open()
-
 				// If we have relocations, do them now. This will (as is necessitated
 				// by the nature of doing these relocations) read the entire section
 				// into memory.
 				if len(section.relocations) > 0 {
-					handle, err := newRelocationReader(r.handle, section)
+					handle, err := newRelocationReader(section)
 					if err != nil {
 						return 0, fmt.Errorf("failed to apply relocations to section: %w", err)
 					}
 
 					r.handle = handle
+				} else {
+					// If no relocations, we can read directly from the section
+					r.handle = section.Open()
 				}
 			}
 		}
 
 		read, err := r.handle.Read(output)
+		totalRead += read
 		eof := errors.Is(err, io.EOF)
 
 		if eof {
@@ -277,10 +297,10 @@ func (r *virtualSectionReader) Read(output []byte) (int, error) {
 			r.handle = nil
 			continue
 		} else if err != nil {
-			return read, fmt.Errorf("failed to read ELF section '%s': %w", r.virt.realSections[r.index].Name, err)
+			return totalRead, fmt.Errorf("failed to read ELF section '%s': %w", r.virt.realSections[r.index].Name, err)
 		}
 
-		return read, nil
+		return totalRead, nil
 	}
 }
 

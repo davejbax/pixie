@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"strings"
 
 	"github.com/davejbax/pixie/internal/align"
@@ -14,9 +15,10 @@ import (
 )
 
 const (
-	SectionText = ".text"
-	SectionData = ".data"
-	SectionBSS  = ".bss"
+	SectionText  = ".text"
+	SectionData  = ".data"
+	SectionBSS   = ".bss"
+	sectionReloc = ".reloc"
 
 	UEFIPageSize = 4096
 
@@ -52,6 +54,7 @@ type Image struct {
 	header    *pe.FileHeader
 	optHeader *pe.OptionalHeader64
 	program   Executable
+	sections  []Section
 }
 
 type Machine uint16
@@ -64,7 +67,7 @@ type Executable interface {
 
 	// Size here must include the expected size of the DOS + PE32 headers:
 	// it is the size of the ENTIRE image file
-	// TODO: do I want to change this?
+	// TODO: do I want to change this so that it doesn't have to worry about DOS/PE32 header size? Probably not as more complex
 	Size() uint32
 
 	// Sections contained within the executable. Note that these must meet
@@ -77,6 +80,10 @@ type Executable interface {
 
 	// PE machine type
 	Machine() Machine
+
+	// All address relocations that cannot be resolved by the linker, and must instead
+	// be resolved by the PE loader
+	Relocations() []*Relocation
 }
 
 func New(program Executable) (*Image, error) {
@@ -153,9 +160,22 @@ func New(program Executable) (*Image, error) {
 		DataDirectory:       [numDataDirectories]pe.DataDirectory{},
 	}
 
+	sections := program.Sections()
+
+	if len(program.Relocations()) > 0 {
+		lastSection := sections[len(sections)-1]
+		relocStart := align.Address(lastSection.Header().Offset+lastSection.Header().Size, UEFIPageSize)
+		relocSection := newRelocationSection(program.Relocations(), relocStart)
+		sections = append(sections, relocSection)
+
+		optHeader.SizeOfImage += relocSection.Header().Size
+		optHeader.DataDirectory[pe.IMAGE_DIRECTORY_ENTRY_BASERELOC].Size = relocSection.Header().Size
+		optHeader.DataDirectory[pe.IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress = relocSection.Header().VirtualAddress
+	}
+
 	header := pe.FileHeader{
 		Machine:          uint16(program.Machine()),
-		NumberOfSections: uint16(len(program.Sections())),
+		NumberOfSections: uint16(len(sections)),
 
 		// Unimportant; don't bother setting
 		TimeDateStamp: 0,
@@ -176,6 +196,7 @@ func New(program Executable) (*Image, error) {
 		header:    &header,
 		optHeader: &optHeader,
 		program:   program,
+		sections:  sections,
 	}, nil
 }
 
@@ -198,9 +219,7 @@ func (i *Image) WriteTo(w io.Writer) (int64, error) {
 		return int64(cw.BytesWritten()), fmt.Errorf("failed to write PE optional header: %w", err)
 	}
 
-	sections := i.program.Sections()
-
-	for _, section := range sections {
+	for _, section := range i.sections {
 		header := section.Header()
 
 		// We need to convert to a [pe.SectionHeader32], which is like a [pe.SectionHeader]
@@ -223,7 +242,7 @@ func (i *Image) WriteTo(w io.Writer) (int64, error) {
 		}
 	}
 
-	for _, section := range sections {
+	for _, section := range i.sections {
 		// Sections aren't necessarily contiguous and generally start on some power-of-two boundary.
 		// Hence, we need to write zeros until we reach the start of the section.
 		bytesUntilSection := int(section.Header().Offset) - cw.BytesWritten()
@@ -236,9 +255,15 @@ func (i *Image) WriteTo(w io.Writer) (int64, error) {
 		}
 
 		reader := section.Open()
-		if _, err := io.Copy(cw, reader); err != nil {
+		written, err := io.Copy(cw, reader)
+		if err != nil {
 			return int64(cw.BytesWritten()), fmt.Errorf("failed to write PE section '%s': %w", section.Header().Name, err)
 		}
+
+		slog.Debug("wrote PE image section",
+			"count", written,
+			"section", section.Header().Name,
+		)
 
 		_ = reader.Close()
 	}
@@ -246,7 +271,7 @@ func (i *Image) WriteTo(w io.Writer) (int64, error) {
 	// The section end was probably aligned to some boundary, and this might be more data than they give us.
 	// If that's the case, pad it with zeros.
 	// TODO: should this be the responsibility of the section provider?
-	lastSection := sections[len(sections)-1]
+	lastSection := i.sections[len(i.sections)-1]
 	bytesRemaining := int(lastSection.Header().Offset) + int(lastSection.Header().Size) - cw.BytesWritten()
 	if bytesRemaining > 0 {
 		if err := iometa.WriteZeros(cw, bytesRemaining); err != nil {

@@ -153,9 +153,7 @@ type countingWriter struct {
 
 func (c *countingWriter) Write(p []byte) (int, error) {
 	written, err := c.writer.Write(p)
-	if err == nil {
-		c.bytesWritten += written
-	}
+	c.bytesWritten += written
 
 	return written, err
 }

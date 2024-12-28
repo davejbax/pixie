@@ -33,6 +33,7 @@ type image struct {
 	size            uint64
 	symbols         []elf.Symbol
 	virtualSections []*virtualSection
+	relocations     []*efipe.Relocation
 }
 
 var _ efipe.Executable = &image{}
@@ -56,7 +57,8 @@ func NewImage(r io.ReaderAt, headerSize uint64, alignment uint64) (*image, error
 		return nil, fmt.Errorf("failed to relocate symbols: %w", err)
 	}
 
-	if err := relocateAddresses(elfFile, virtualSections, symbs); err != nil {
+	relocs, err := relocateAddresses(elfFile, virtualSections, symbs)
+	if err != nil {
 		return nil, fmt.Errorf("failed to relocate addresses: %w", err)
 	}
 
@@ -82,6 +84,7 @@ func NewImage(r io.ReaderAt, headerSize uint64, alignment uint64) (*image, error
 		size:            end,
 		symbols:         symbs,
 		virtualSections: virtualSections,
+		relocations:     relocs,
 	}, nil
 }
 
@@ -126,4 +129,8 @@ func (i *image) Sections() efipe.SectionList {
 
 func (i *image) Size() uint32 {
 	return uint32(i.size)
+}
+
+func (i *image) Relocations() []*efipe.Relocation {
+	return i.relocations
 }
