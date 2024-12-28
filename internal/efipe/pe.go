@@ -93,8 +93,11 @@ func New(program Executable) (*Image, error) {
 	}
 
 	dataSectionSize := uint32(0)
-	if dataSection, found := program.Sections().GetByName(SectionData); found {
-		dataSectionSize = dataSection.Header().Size
+	for _, section := range program.Sections() {
+		header := section.Header()
+		if header.Characteristics&pe.IMAGE_SCN_CNT_INITIALIZED_DATA > 0 {
+			dataSectionSize += header.Size
+		}
 	}
 
 	bssSectionSize := uint32(0)
@@ -201,7 +204,7 @@ func New(program Executable) (*Image, error) {
 }
 
 func (i *Image) WriteTo(w io.Writer) (int64, error) {
-	cw := &countingWriter{writer: w}
+	cw := &iometa.CountingWriter{Writer: w}
 
 	if _, err := i.dos.WriteTo(cw); err != nil {
 		return int64(cw.BytesWritten()), fmt.Errorf("failed to write DOS header: %w", err)

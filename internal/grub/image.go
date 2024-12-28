@@ -34,13 +34,14 @@ type image struct {
 	symbols         []elf.Symbol
 	virtualSections []*virtualSection
 	relocations     []*efipe.Relocation
+	modules         *moduleSection
 }
 
 var _ efipe.Executable = &image{}
 
 // TODO: document properly
 // alignment must be a power of two
-func NewImage(r io.ReaderAt, headerSize uint64, alignment uint64) (*image, error) {
+func NewImage(r io.ReaderAt, mods []*Module, headerSize uint64, alignment uint64) (*image, error) {
 	elfFile, err := elf.NewFile(r)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read ELF file: %w", err)
@@ -78,6 +79,17 @@ func NewImage(r io.ReaderAt, headerSize uint64, alignment uint64) (*image, error
 	// Realign the end of the sections to whatever the requested boundary is
 	end := align.Address(lastSection.offset+lastSection.size, alignment)
 
+	var moduleSection *moduleSection
+
+	if len(mods) > 0 {
+		moduleSection, err = newModuleSection(mods, uint32(end), uint32(alignment))
+		if err != nil {
+			return nil, fmt.Errorf("failed to create modules section: %w", err)
+		}
+
+		end = align.Address(end+uint64(moduleSection.Header().VirtualSize), alignment)
+	}
+
 	return &image{
 		file:            elfFile,
 		headerSize:      headerSize,
@@ -85,6 +97,7 @@ func NewImage(r io.ReaderAt, headerSize uint64, alignment uint64) (*image, error
 		symbols:         symbs,
 		virtualSections: virtualSections,
 		relocations:     relocs,
+		modules:         moduleSection,
 	}, nil
 }
 
@@ -122,6 +135,10 @@ func (i *image) Sections() efipe.SectionList {
 
 	for _, section := range i.virtualSections {
 		sections = append(sections, section)
+	}
+
+	if i.modules != nil {
+		sections = append(sections, i.modules)
 	}
 
 	return sections

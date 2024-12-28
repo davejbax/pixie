@@ -22,7 +22,7 @@ func main() {
 
 	// headerSize := 512
 
-	img, err := grub.NewImage(f, 4096, 4096)
+	img, err := grub.NewImage(f, []*grub.Module{grub.NewPrefixModule("GRUB")}, 4096, 4096)
 	if err != nil {
 		log.Fatal(err)
 	}

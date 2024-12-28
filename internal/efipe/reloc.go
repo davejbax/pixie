@@ -46,7 +46,7 @@ type relocationBlock struct {
 }
 
 func (b *relocationBlock) WriteTo(w io.Writer) (int64, error) {
-	cw := &countingWriter{writer: w}
+	cw := &iometa.CountingWriter{Writer: w}
 	opts := &struc.Options{Order: binary.LittleEndian}
 
 	if err := struc.PackWithOptions(cw, b.pageRVA, opts); err != nil {

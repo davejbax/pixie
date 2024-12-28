@@ -7,6 +7,7 @@ import (
 	"io"
 	"math"
 
+	"github.com/davejbax/pixie/internal/iometa"
 	"github.com/lunixbochs/struc"
 )
 
@@ -57,7 +58,7 @@ func (d *dosHeader) MarshalBinary() ([]byte, error) {
 }
 
 func (d *dosHeader) WriteTo(output io.Writer) (int64, error) {
-	countedOutput := &countingWriter{writer: output}
+	countedOutput := &iometa.CountingWriter{Writer: output}
 
 	if written, err := countedOutput.Write(dosMagic); err != nil {
 		return int64(written), fmt.Errorf("failed to write DOS magic: %w", err)
@@ -144,20 +145,4 @@ func (d *dosImage) WriteTo(output io.Writer) (int64, error) {
 	}
 
 	return written, nil
-}
-
-type countingWriter struct {
-	writer       io.Writer
-	bytesWritten int
-}
-
-func (c *countingWriter) Write(p []byte) (int, error) {
-	written, err := c.writer.Write(p)
-	c.bytesWritten += written
-
-	return written, err
-}
-
-func (c *countingWriter) BytesWritten() int {
-	return c.bytesWritten
 }
