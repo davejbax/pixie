@@ -2,7 +2,7 @@
 ![GitHub Release](https://img.shields.io/github/v/release/davejbax/pixie)
 [![Go Reference](https://pkg.go.dev/badge/github.com/davejbax/pixie.svg)](https://pkg.go.dev/github.com/davejbax/pixie)
 [![Go Report Card](https://goreportcard.com/badge/github.com/davejbax/pixie)](https://goreportcard.com/report/github.com/davejbax/pixie)
-![Test workflow](https://github.com/davejbax/pixie/actions/workflows/test.yml/badge.svg)
+![Test workflow](https://github.com/davejbax/pixie/actions/workflows/test.yaml/badge.svg)
 
 <div align="center">
   <img src="./docs/pixie.png" height="200">
