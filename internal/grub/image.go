@@ -22,12 +22,11 @@ const (
 )
 
 var (
-	errSectionNotFound    = errors.New("section with given index not found")
 	errUnrecognizedSymbol = errors.New("unrecognised symbol defined relative to SHN_UNDEF")
 	errNoEntrypoint       = errors.New("image has no entrypoint")
 )
 
-type image struct {
+type Image struct {
 	file            *elf.File
 	headerSize      uint64
 	size            uint64
@@ -37,11 +36,11 @@ type image struct {
 	modules         *moduleSection
 }
 
-var _ efipe.Executable = &image{}
+var _ efipe.Executable = &Image{}
 
 // TODO: document properly
 // alignment must be a power of two
-func NewImage(r io.ReaderAt, mods []*Module, headerSize uint64, alignment uint64) (*image, error) {
+func NewImage(r io.ReaderAt, mods []*Module, headerSize uint64, alignment uint64) (*Image, error) {
 	elfFile, err := elf.NewFile(r)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read ELF file: %w", err)
@@ -82,15 +81,11 @@ func NewImage(r io.ReaderAt, mods []*Module, headerSize uint64, alignment uint64
 	var moduleSection *moduleSection
 
 	if len(mods) > 0 {
-		moduleSection, err = newModuleSection(mods, uint32(end), uint32(alignment))
-		if err != nil {
-			return nil, fmt.Errorf("failed to create modules section: %w", err)
-		}
-
+		moduleSection = newModuleSection(mods, uint32(end), uint32(alignment))
 		end = align.Address(end+uint64(moduleSection.Header().VirtualSize), alignment)
 	}
 
-	return &image{
+	return &Image{
 		file:            elfFile,
 		headerSize:      headerSize,
 		size:            end,
@@ -101,7 +96,7 @@ func NewImage(r io.ReaderAt, mods []*Module, headerSize uint64, alignment uint64
 	}, nil
 }
 
-func (i *image) Entrypoint() uint32 {
+func (i *Image) Entrypoint() uint32 {
 	for _, symb := range i.symbols {
 		if symb.Name == symbStart {
 			return uint32(symb.Value)
@@ -111,7 +106,7 @@ func (i *image) Entrypoint() uint32 {
 	panic("could not find entrypoint symbol")
 }
 
-func (i *image) BaseOfCode() uint32 {
+func (i *Image) BaseOfCode() uint32 {
 	for _, virt := range i.virtualSections {
 		if virt.kind == virtualSectionTypeText {
 			return uint32(virt.offset)
@@ -121,7 +116,7 @@ func (i *image) BaseOfCode() uint32 {
 	panic("no .text section found")
 }
 
-func (i *image) Machine() efipe.Machine {
+func (i *Image) Machine() efipe.Machine {
 	machine, err := efipeMachine(i.file.Machine)
 	if err != nil {
 		panic(fmt.Sprintf("could not convert ELF machine type to EFI PE machine: %v", err))
@@ -130,7 +125,7 @@ func (i *image) Machine() efipe.Machine {
 	return machine
 }
 
-func (i *image) Sections() efipe.SectionList {
+func (i *Image) Sections() efipe.SectionList {
 	sections := make([]efipe.Section, 0, len(i.virtualSections))
 
 	for _, section := range i.virtualSections {
@@ -144,10 +139,10 @@ func (i *image) Sections() efipe.SectionList {
 	return sections
 }
 
-func (i *image) Size() uint32 {
+func (i *Image) Size() uint32 {
 	return uint32(i.size)
 }
 
-func (i *image) Relocations() []*efipe.Relocation {
+func (i *Image) Relocations() []*efipe.Relocation {
 	return i.relocations
 }

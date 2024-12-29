@@ -66,15 +66,16 @@ func layoutVirtualSections(f *elf.File, headerSize uint64, alignment uint64) []*
 
 		isection := &elfSection{Section: *section, index: sectionIndex}
 
-		if hasExecInstr && hasAlloc {
+		switch {
+		case hasExecInstr && hasAlloc:
 			textSections = append(textSections, isection)
-		} else if !hasExecInstr && hasAlloc {
+		case !hasExecInstr && hasAlloc:
 			if section.Type == elf.SHT_NOBITS {
 				bssSections = append(bssSections, isection)
 			} else {
 				dataSections = append(dataSections, isection)
 			}
-		} else {
+		default:
 			slog.Warn("excluding section (not text/data/BSS)",
 				"section", section.Name,
 			)
@@ -82,15 +83,13 @@ func layoutVirtualSections(f *elf.File, headerSize uint64, alignment uint64) []*
 	}
 
 	// Concat sections of the same type in a specific order: first .text, then
-	// .data, then .bss
-	addr := uint64(headerSize)
+	// .data, then .bss (which is also placed in the virtual .data section, following GRUB behaviour)
+	addr := headerSize
+	dataSections = append(dataSections, bssSections...)
 
 	virtualSections := make([]*virtualSection, 2)
-
 	virtualSections[0], addr = createVirtualSection(addr, textSections, alignment, virtualSectionTypeText)
-	dataSections = append(dataSections, bssSections...)
-	virtualSections[1], addr = createVirtualSection(addr, dataSections, alignment, virtualSectionTypeData)
-	// virtualSections[2], addr = createVirtualSection(addr, bssSections, alignment, virtualSectionTypeBSS)
+	virtualSections[1], addr = createVirtualSection(addr, dataSections, alignment, virtualSectionTypeData) //nolint:ineffassign,staticcheck
 
 	return virtualSections
 }
@@ -176,7 +175,7 @@ func relocateSymbols(f *elf.File, virtualSections []*virtualSection) ([]elf.Symb
 			} else {
 				return nil, fmt.Errorf("error processing symbol '%s': %w", symb.Name, errUnrecognizedSymbol)
 			}
-		} else if symb.Section == elf.SHN_ABS {
+		} else if symb.Section == elf.SHN_ABS { //nolint:revive
 			// Symbols are absolute, and we have no need to relocate them
 		} else {
 			section, ok := sectionsByIndex[int(symb.Section)]
@@ -255,7 +254,9 @@ func (s *virtualSection) WriteTo(w io.Writer) (int64, error) {
 	for _, section := range s.realSections {
 		// If there's padding before the start of this section, write it now
 		if uint64(cw.BytesWritten()) < section.addrInFile-initialAddr {
-			iometa.WriteZeros(cw, int(section.addrInFile-initialAddr)-cw.BytesWritten())
+			if err := iometa.WriteZeros(cw, int(section.addrInFile-initialAddr)-cw.BytesWritten()); err != nil {
+				return int64(cw.BytesWritten()), fmt.Errorf("failed to write pre-padding for underlying ELF section '%s': %w", section.Name, err)
+			}
 		}
 
 		var sectionData io.Reader

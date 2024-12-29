@@ -18,7 +18,7 @@ import (
 	"github.com/lunixbochs/struc"
 )
 
-type moduleDependencies map[string][]string
+type ModuleDependencies map[string][]string
 
 var (
 	errInvalidDependencyListFormat = errors.New("dependency list does not follow GRUB moddep.lst format")
@@ -34,8 +34,8 @@ const (
 	sectionMods = "mods"
 )
 
-func NewDependencyList(r io.Reader) (moduleDependencies, error) {
-	list := make(moduleDependencies)
+func NewDependencyList(r io.Reader) (ModuleDependencies, error) {
+	list := make(ModuleDependencies)
 	scanner := bufio.NewScanner(r)
 
 	for scanner.Scan() {
@@ -64,7 +64,7 @@ func NewDependencyList(r io.Reader) (moduleDependencies, error) {
 	return list, nil
 }
 
-func (d moduleDependencies) Resolve(modules []string) ([]string, error) {
+func (d ModuleDependencies) Resolve(modules []string) ([]string, error) {
 	unresolved := slices.Clone(modules)
 	var allDependencies []string
 
@@ -139,7 +139,7 @@ func NewModuleFromDirectory(directory string, module string) (*Module, error) {
 		open: func() (io.ReadCloser, error) {
 			return os.Open(path)
 		},
-	}, err
+	}, nil
 }
 
 const (
@@ -256,7 +256,7 @@ func (s *moduleSection) WriteTo(w io.Writer) (int64, error) {
 	return int64(cw.BytesWritten()), nil
 }
 
-func newModuleSection(mods []*Module, offset uint32, alignment uint32) (*moduleSection, error) {
+func newModuleSection(mods []*Module, offset uint32, alignment uint32) *moduleSection {
 	totalSize := uint64(0)
 	for _, mod := range mods {
 		totalSize += uint64(mod.payloadSize) + moduleHeaderStructSize
@@ -265,5 +265,5 @@ func newModuleSection(mods []*Module, offset uint32, alignment uint32) (*moduleS
 
 	virtualSize := align.Address(offset+uint32(totalSize), alignment) - offset
 
-	return &moduleSection{mods: mods, offset: offset, realSize: totalSize, virtualSize: virtualSize}, nil
+	return &moduleSection{mods: mods, offset: offset, realSize: totalSize, virtualSize: virtualSize}
 }

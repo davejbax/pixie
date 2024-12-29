@@ -232,7 +232,7 @@ var relocationFuncsX86_64 = map[elf.R_X86_64]relocationFunc{
 	elf.R_X86_64_PLT32: relocateX86_64Adapter(relocateX86_64_PC32),
 }
 
-func relocateNoop(buff []byte, rel *relocation) (*efipe.Relocation, error) {
+func relocateNoop(_ []byte, _ *relocation) (*efipe.Relocation, error) {
 	return nil, nil
 }
 
@@ -280,7 +280,7 @@ func relocateX86_64_64(addr int64, rel *relocation) (int64, *efipe.Relocation) {
 	return addr, &peRel
 }
 
-func relocateX86_64_PC32(addr int32, rel *relocation) (int32, *efipe.Relocation) {
+func relocateX86_64_PC32(addr int32, rel *relocation) (int32, *efipe.Relocation) { //nolint:revive
 	// PC = section address in file + rel offset
 	return addr + int32(rel.addend&0xFFFFFFFF) + int32(rel.symbValue&0xFFFFFFFF) - int32(rel.fileOffset&0xFFFFFFFF), nil
 }

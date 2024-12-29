@@ -1,0 +1,34 @@
+# $schema: https://golangci-lint.run/jsonschema/golangci.jsonschema.json
+linters:
+  enable:
+    - bidichk # dangerous Unicode sequences
+    - bodyclose # HTTP response body closing
+    - containedctx # no Contexts in structs
+    - contextcheck # non-inherited Context
+    - errchkjson # report unsupported JSON encoding types
+    - errorlint # error wrapping
+    - exhaustive # exhaustive enum switch cases
+    - goconst # detect where we can extract constants
+    - gocritic
+    - gofmt # ensure files are gofmt'd
+    - iface # detect bad interface usage
+    - interfacebloat # no bloated interfaces
+    - loggercheck # ensure logger args make sense
+    - prealloc # check for slices that we can preallocate
+    - recvcheck # receiver naming consistency
+    - revive # metalinter with a lot of useful rules
+    - unconvert # avoid unnecessary type conversions
+    - unparam # avoid unused function parameters
+    - usestdlibvars # use standard library constants where possible
+    - wrapcheck # error wrapping
+linters-settings:
+  exhaustive:
+    # We want to be sure all cases are covered -- not necessarily that we
+    # enumerate every single enum value, as some are very large!
+    default-signifies-exhaustive: true
+  gocritic:
+    settings:
+      ifElseChain:
+        # Default threshold is two, which is very aggressive! Only suggest a
+        # switch block if there are four branches of the if block.
+        minThreshold: 4

@@ -11,11 +11,11 @@ import (
 	"github.com/lunixbochs/struc"
 )
 
-var dosMagic []byte = []byte{0x4D, 0x5A}
+var dosMagic = []byte{0x4D, 0x5A}
 
 // x86 real mode instructions for MS-DOS, printing out a message that the program
 // cannot be run in DOS mode
-var dosStub []byte = []byte{
+var dosStub = []byte{
 	0x0E, 0x1F, 0xBA, 0x0E, 0x00, 0xB4, 0x09, 0xCD, 0x21, 0xB8, 0x01, 0x4C, 0xCD, 0x21, 0x54, 0x68,
 	0x69, 0x73, 0x20, 0x70, 0x72, 0x6F, 0x67, 0x72, 0x61, 0x6D, 0x20, 0x63, 0x61, 0x6E, 0x6E, 0x6F,
 	0x74, 0x20, 0x62, 0x65, 0x20, 0x72, 0x75, 0x6E, 0x20, 0x69, 0x6E, 0x20, 0x44, 0x4F, 0x53, 0x20,
@@ -25,6 +25,7 @@ var dosStub []byte = []byte{
 const dosHeaderSizeBytes = 64
 const pageSizeBytes = 512
 const paragraphSizeBytes = 16
+const dosHeaderSizeParagraphs = (dosHeaderSizeBytes + paragraphSizeBytes - 1) / paragraphSizeBytes
 
 type dosHeader struct {
 	BytesOnLastPage      uint16
@@ -86,7 +87,7 @@ func newDOSImage(program []byte, peStartAddr uint32) *dosImage {
 		BytesOnLastPage:      uint16(lastPageSize),
 		PagesInFile:          uint16(numPages),
 		RelocationItems:      0,
-		HeaderSizeParagraphs: 4, // our DOS header is always 64 bytes
+		HeaderSizeParagraphs: dosHeaderSizeParagraphs, // our DOS header is always 64 bytes
 
 		// Most things tend to 'require' 10 paragraphs, and 'request'
 		// the maximum number (0xFFFF). I'm not sure where these come

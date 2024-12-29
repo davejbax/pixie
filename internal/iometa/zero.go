@@ -2,6 +2,7 @@ package iometa
 
 import (
 	"errors"
+	"fmt"
 	"io"
 )
 
@@ -46,6 +47,9 @@ func (r *ZeroReader) Seek(offset int64, whence int) (int64, error) {
 
 func WriteZeros(w io.Writer, count int) error {
 	r := &ZeroReader{Size: count}
-	_, err := io.Copy(w, r)
-	return err
+	if _, err := io.Copy(w, r); err != nil {
+		return fmt.Errorf("failed to write zeros: %w", err)
+	}
+
+	return nil
 }
