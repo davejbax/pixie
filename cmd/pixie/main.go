@@ -31,13 +31,13 @@ func main() {
 	}
 
 	modNames, err := modlist.Resolve([]string{
-		"normal", "tftp", "http",
+		"normal", "tftp", "http", "linux",
 	})
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	var mods []*grub.Module
+	mods := make([]*grub.Module, 0, len(modNames))
 
 	for _, modName := range modNames {
 		mod, err := grub.NewModuleFromDirectory("/usr/lib/grub/x86_64-efi", modName)
@@ -50,7 +50,7 @@ func main() {
 		mods = append(mods, mod)
 	}
 
-	mods = append(mods, grub.NewPrefixModule("GRUB"))
+	mods = append(mods, grub.NewPrefixModule("(tftp)"))
 
 	img, err := grub.NewImage(f, mods, 4096, 4096)
 	if err != nil {
