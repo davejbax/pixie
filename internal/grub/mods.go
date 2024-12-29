@@ -169,18 +169,28 @@ type moduleHeader struct {
 	Size uint32
 }
 
-func NewPrefixModule(prefix string) *Module {
-	prefixLength := align.Address(uint32(len(prefix)+1), 8)
-	prefixBytes := make([]byte, prefixLength)
-	copy(prefixBytes, []byte(prefix))
+func newStaticModule(objType ObjType, data []byte, unalignedLength uint32) *Module {
+	length := align.Address(unalignedLength, voidPointerAlignment)
+	paddedData := make([]byte, length)
+	copy(paddedData, data)
 
 	return &Module{
-		objType:     ObjTypePrefix,
-		payloadSize: uint32(prefixLength),
+		objType:     objType,
+		payloadSize: length,
 		open: func() (io.ReadCloser, error) {
-			return &iometa.Closifier{Reader: bytes.NewReader(prefixBytes)}, nil
+			return &iometa.Closifier{Reader: bytes.NewReader(paddedData)}, nil
 		},
 	}
+}
+
+func NewPrefixModule(prefix string) *Module {
+	// Length + 1 for nul byte (C-style string)
+	return newStaticModule(ObjTypePrefix, []byte(prefix), uint32(len(prefix)+1))
+}
+
+func NewConfigModule(config string) *Module {
+	// Length + 1 for nul byte (C-style string)
+	return newStaticModule(ObjTypeConfig, []byte(config), uint32(len(config)+1))
 }
 
 type moduleSection struct {
