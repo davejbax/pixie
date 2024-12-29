@@ -20,30 +20,42 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// headerSize := 512
-
-	img, err := grub.NewImage(f, []*grub.Module{grub.NewPrefixModule("GRUB")}, 4096, 4096)
+	modlistFile, err := os.Open("moddep.lst")
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	// sects := img.Sections()
-	// sect, ok := sects.GetByName(efipe.SectionData)
-	// if !ok {
-	// 	log.Fatal("not ok")
-	// }
+	modlist, err := grub.NewDependencyList(modlistFile)
+	if err != nil {
+		log.Fatal(err)
+	}
 
-	// r := sect.Open()
-	// debug := make([]byte, 16)
-	// var read int
+	modNames, err := modlist.Resolve([]string{
+		"normal", "tftp", "http",
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
 
-	// for err == nil {
-	// 	read, err = r.Read(debug)
-	// 	for _, byt := range debug {
-	// 		fmt.Printf("%02x ", byt)
-	// 	}
-	// 	fmt.Printf("(%d)\n", read)
-	// }
+	var mods []*grub.Module
+
+	for _, modName := range modNames {
+		mod, err := grub.NewModuleFromDirectory("/usr/lib/grub/x86_64-efi", modName)
+		if err != nil {
+			log.Fatalf("failed to load module '%s': %v", modName, err)
+		}
+
+		slog.Info("adding module", "mod", modName)
+
+		mods = append(mods, mod)
+	}
+
+	mods = append(mods, grub.NewPrefixModule("GRUB"))
+
+	img, err := grub.NewImage(f, mods, 4096, 4096)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	efiImg, err := efipe.New(img)
 	if err != nil {
@@ -61,23 +73,4 @@ func main() {
 	}
 
 	fmt.Printf("wrote %d bytes\n", written)
-
-	modlistFile, err := os.Open("moddep.lst")
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	modlist, err := grub.NewDependencyList(modlistFile)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	mods, err := modlist.Resolve([]string{"font", "time", "lvm"})
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	for _, mod := range mods {
-		fmt.Printf("mod: %s\n", mod)
-	}
 }

@@ -66,7 +66,7 @@ func NewDependencyList(r io.Reader) (moduleDependencies, error) {
 
 func (d moduleDependencies) Resolve(modules []string) ([]string, error) {
 	unresolved := slices.Clone(modules)
-	allDependencies := make([]string, 0, len(unresolved))
+	var allDependencies []string
 
 	for len(unresolved) > 0 {
 		// Shift the module off the queue
@@ -85,7 +85,23 @@ func (d moduleDependencies) Resolve(modules []string) ([]string, error) {
 		unresolved = append(unresolved, directDependencies...)
 	}
 
-	return allDependencies, nil
+	// We added every module and then its dependents. Hence, reversing this
+	// should give us a list (with duplicates) where leaf dependencies come
+	// before their dependants
+	slices.Reverse(allDependencies)
+
+	seenModules := make(map[string]struct{})
+	uniqueDependencies := make([]string, 0, len(allDependencies))
+	for _, dependency := range allDependencies {
+		if _, ok := seenModules[dependency]; ok {
+			continue
+		}
+
+		seenModules[dependency] = struct{}{}
+		uniqueDependencies = append(uniqueDependencies, dependency)
+	}
+
+	return uniqueDependencies, nil
 }
 
 type ObjType uint32
@@ -109,7 +125,7 @@ type Module struct {
 	open        func() (io.ReadCloser, error)
 }
 
-func ReadModuleFromDirectory(directory string, module string) (*Module, error) {
+func NewModuleFromDirectory(directory string, module string) (*Module, error) {
 	path := filepath.Join(directory, module+".mod")
 
 	stat, err := os.Stat(path)
