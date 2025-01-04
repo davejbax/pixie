@@ -231,6 +231,10 @@ func New(program Executable, headerSize uint32) (*Image, error) {
 	}, nil
 }
 
+func (i *Image) Size() uint32 {
+	return i.program.Size()
+}
+
 func (i *Image) WriteTo(w io.Writer) (int64, error) {
 	cw := &iometa.CountingWriter{Writer: w}
 
