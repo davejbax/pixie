@@ -103,7 +103,7 @@ func newRelocationSection(relocs []*Relocation, offset uint32) *relocationSectio
 			)
 		}
 
-		if len(entries)*2+8 > UEFIPageSize {
+		if uint32(len(entries)*2+8) > UEFIPageSize {
 			// Sanity check; theoretically this should never happen!
 			panic(fmt.Sprintf("too many entries in relocation block: have %d, which would exceed UEFI page size (%d)", len(entries), UEFIPageSize))
 		}

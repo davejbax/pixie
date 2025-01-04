@@ -1,3 +1,4 @@
+// Package efipe implements writing UEFI application PE files, suitable for loading by UEFI firmware
 package efipe
 
 import (
@@ -20,14 +21,18 @@ const (
 	SectionBSS   = ".bss"
 	sectionReloc = ".reloc"
 
-	UEFIPageSize = 4096
+	UEFIPageSize = uint32(4096)
+
+	// FixedHeaderSize is the total size of the PE file header (DOS stub + COFF header + optional header),
+	// not including any section headers (as the size of those depends on the number of sections!).
+	FixedHeaderSize = uint32(2) + dosHeaderAndStubSize + peFileHeaderSize + optionalHeaderSize
+
+	// Size of a single section header
+	SectionHeaderSize = 40
 
 	pe32PlusMagic = 0x020b
 
-	// Statically define our (DOS header + PE32+ header) header size, as we
-	// need to know this in advance. It's pretty unlikely that this will
-	// exceed the UEFI page size
-	totalHeaderSize = UEFIPageSize
+	peFileHeaderSize = 20
 
 	// Optional PE32+ header necessarily has 112 bytes, plus 8 bytes per data directory
 	optionalHeaderSize = 112 + 8*numDataDirectories
@@ -47,6 +52,7 @@ var (
 
 	errNoTextSection        = errors.New("required .text section not found in provided executable sections")
 	errSectionOffsetInvalid = errors.New("section offset is less than number of bytes already written")
+	errInvalidHeaderSize    = errors.New("PE file header size must be aligned to UEFI page size")
 )
 
 type Image struct {
@@ -60,14 +66,23 @@ type Image struct {
 type Machine uint16
 
 // Executable defines a relocatable executable that will be the
-// 'payload' of a PE file
+// 'payload' of a PE file. The executable must have knowledge that it
+// will be embedded into a PE file, and hence must factor some PE header
+// size; this is the simplest way that section virtual addresses can be
+// aligned and referenced correctly.
+//
+// Use [PEHeaderSize] to compute the size of the whole PE file header
+// for a given number of sections, if this number is known in advance.
+// Otherwise, choose a big enough header size that's aligned to [UEFIPageSize].
 type Executable interface {
+	// Address of the entrypoint of the executable
 	Entrypoint() uint32
+
+	// Address of the start of the .text section in the executable (or otherwise
+	// start of 'the' executable section)
 	BaseOfCode() uint32
 
-	// Size here must include the expected size of the DOS + PE32 headers:
-	// it is the size of the ENTIRE image file
-	// TODO: do I want to change this so that it doesn't have to worry about DOS/PE32 header size? Probably not as more complex
+	// Size is the total size of the final PE executable, including PE header.
 	Size() uint32
 
 	// Sections contained within the executable. Note that these must meet
@@ -86,7 +101,20 @@ type Executable interface {
 	Relocations() []*Relocation
 }
 
-func New(program Executable) (*Image, error) {
+func SectionHeadersSize(numSections uint32) uint32 {
+	// +1 as we'll have a relocation section
+	return SectionHeaderSize * (numSections + 1)
+}
+
+func PEHeaderSize(numSections uint32) uint32 {
+	return align.Address(FixedHeaderSize+SectionHeadersSize(numSections), UEFIPageSize)
+}
+
+func New(program Executable, headerSize uint32) (*Image, error) {
+	if headerSize%UEFIPageSize != 0 {
+		return nil, errInvalidHeaderSize
+	}
+
 	textSection, found := program.Sections().GetByName(SectionText)
 	if !found {
 		return nil, errNoTextSection
@@ -137,7 +165,7 @@ func New(program Executable) (*Image, error) {
 		Win32VersionValue:           0,
 
 		SizeOfImage:   program.Size(),
-		SizeOfHeaders: totalHeaderSize, // must be rounded up to FileAlignment
+		SizeOfHeaders: headerSize, // must be rounded up to FileAlignment=UEFIPageSize
 
 		// Unused
 		CheckSum: 0,
@@ -192,7 +220,7 @@ func New(program Executable) (*Image, error) {
 	}
 
 	peHeaderStartAddr := align.Address(uint32(len(dosStub)), 128)
-	dosImage := newDOSImage(dosStub, peHeaderStartAddr)
+	dosImage := newDOSImage(dosStub[:], peHeaderStartAddr)
 
 	return &Image{
 		dos:       dosImage,

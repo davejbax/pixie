@@ -52,12 +52,12 @@ func main() {
 
 	mods = append(mods, grub.NewPrefixModule("(tftp)"))
 
-	img, err := grub.NewImage(f, mods, 4096, 4096)
+	img, err := grub.NewImage(f, mods, efipe.UEFIPageSize)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	efiImg, err := efipe.New(img)
+	efiImg, err := efipe.New(img, img.PEHeaderSize())
 	if err != nil {
 		log.Fatal(err)
 	}

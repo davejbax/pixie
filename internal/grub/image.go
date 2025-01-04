@@ -28,8 +28,8 @@ var (
 
 type Image struct {
 	file            *elf.File
-	headerSize      uint64
-	size            uint64
+	headerSize      uint32
+	size            uint32
 	symbols         []elf.Symbol
 	virtualSections []*virtualSection
 	relocations     []*efipe.Relocation
@@ -40,7 +40,7 @@ var _ efipe.Executable = &Image{}
 
 // TODO: document properly
 // alignment must be a power of two
-func NewImage(r io.ReaderAt, mods []*Module, headerSize uint64, alignment uint64) (*Image, error) {
+func NewImage(r io.ReaderAt, mods []*Module, alignment uint32) (*Image, error) {
 	elfFile, err := elf.NewFile(r)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read ELF file: %w", err)
@@ -49,6 +49,10 @@ func NewImage(r io.ReaderAt, mods []*Module, headerSize uint64, alignment uint64
 	if !isMachineSupported(elfFile.Machine) {
 		return nil, errUnsupportedELFMachineType
 	}
+
+	// Allow enough room for 3 sections -- .text, .data, and mods (even though we
+	// might not have mods!)
+	headerSize := efipe.PEHeaderSize(3)
 
 	virtualSections := layoutVirtualSections(elfFile, headerSize, alignment)
 
@@ -76,13 +80,13 @@ func NewImage(r io.ReaderAt, mods []*Module, headerSize uint64, alignment uint64
 
 	lastSection := virtualSections[len(virtualSections)-1]
 	// Realign the end of the sections to whatever the requested boundary is
-	end := align.Address(lastSection.offset+lastSection.size, alignment)
+	end := align.Address(uint32(lastSection.offset+lastSection.size), alignment)
 
 	var moduleSection *moduleSection
 
 	if len(mods) > 0 {
-		moduleSection = newModuleSection(mods, uint32(end), uint32(alignment))
-		end = align.Address(end+uint64(moduleSection.Header().VirtualSize), alignment)
+		moduleSection = newModuleSection(mods, end, alignment)
+		end = align.Address(end+moduleSection.Header().VirtualSize, alignment)
 	}
 
 	return &Image{
@@ -94,6 +98,10 @@ func NewImage(r io.ReaderAt, mods []*Module, headerSize uint64, alignment uint64
 		relocations:     relocs,
 		modules:         moduleSection,
 	}, nil
+}
+
+func (i *Image) PEHeaderSize() uint32 {
+	return i.headerSize
 }
 
 func (i *Image) Entrypoint() uint32 {
@@ -140,7 +148,7 @@ func (i *Image) Sections() efipe.SectionList {
 }
 
 func (i *Image) Size() uint32 {
-	return uint32(i.size)
+	return i.size
 }
 
 func (i *Image) Relocations() []*efipe.Relocation {

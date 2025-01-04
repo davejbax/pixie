@@ -26,19 +26,7 @@ type elfSection struct {
 	relocations         []*relocation
 }
 
-// type elfSectionList []*elfSection
-
-// func (l elfSectionList) GetByIndex(index int) (*elfSection, error) {
-// 	for _, section := range l {
-// 		if section.index == index {
-// 			return section, nil
-// 		}
-// 	}
-
-// 	return nil, errSectionNotFound
-// }
-
-type virtualSectionType int // TODO should this be = int?
+type virtualSectionType int
 
 const (
 	virtualSectionTypeText virtualSectionType = iota
@@ -55,7 +43,7 @@ type virtualSection struct {
 	realSections []*elfSection
 }
 
-func layoutVirtualSections(f *elf.File, headerSize uint64, alignment uint64) []*virtualSection {
+func layoutVirtualSections(f *elf.File, headerSize uint32, alignment uint32) []*virtualSection {
 	textSections := []*elfSection{}
 	dataSections := []*elfSection{}
 	bssSections := []*elfSection{}
@@ -84,12 +72,12 @@ func layoutVirtualSections(f *elf.File, headerSize uint64, alignment uint64) []*
 
 	// Concat sections of the same type in a specific order: first .text, then
 	// .data, then .bss (which is also placed in the virtual .data section, following GRUB behaviour)
-	addr := headerSize
+	addr := uint64(headerSize)
 	dataSections = append(dataSections, bssSections...)
 
 	virtualSections := make([]*virtualSection, 2)
-	virtualSections[0], addr = createVirtualSection(addr, textSections, alignment, virtualSectionTypeText)
-	virtualSections[1], addr = createVirtualSection(addr, dataSections, alignment, virtualSectionTypeData) //nolint:ineffassign,staticcheck
+	virtualSections[0], addr = createVirtualSection(addr, textSections, uint64(alignment), virtualSectionTypeText)
+	virtualSections[1], addr = createVirtualSection(addr, dataSections, uint64(alignment), virtualSectionTypeData) //nolint:ineffassign,staticcheck
 
 	return virtualSections
 }
