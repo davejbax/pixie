@@ -3,14 +3,19 @@ module github.com/davejbax/pixie
 go 1.23.4
 
 require (
+	github.com/Masterminds/semver/v3 v3.3.1
+	github.com/PuerkitoBio/goquery v1.10.1
 	github.com/creasty/defaults v1.8.0
 	github.com/diskfs/go-diskfs v1.5.0
+	github.com/go-viper/mapstructure/v2 v2.2.1
 	github.com/lunixbochs/struc v0.0.0-20241101090106-8d528fa2c543
 	github.com/spf13/cobra v1.8.1
 	github.com/spf13/viper v1.19.0
+	golang.org/x/sync v0.10.0
 )
 
 require (
+	github.com/andybalholm/cascadia v1.3.3 // indirect
 	github.com/djherbis/times v1.6.0 // indirect
 	github.com/elliotwutingfeng/asciiset v0.0.0-20230602022725-51bbb787efab // indirect
 	github.com/fsnotify/fsnotify v1.7.0 // indirect
@@ -35,8 +40,9 @@ require (
 	go.uber.org/atomic v1.9.0 // indirect
 	go.uber.org/multierr v1.9.0 // indirect
 	golang.org/x/exp v0.0.0-20230905200255-921286631fa9 // indirect
-	golang.org/x/sys v0.19.0 // indirect
-	golang.org/x/text v0.14.0 // indirect
+	golang.org/x/net v0.33.0 // indirect
+	golang.org/x/sys v0.28.0 // indirect
+	golang.org/x/text v0.21.0 // indirect
 	gopkg.in/ini.v1 v1.67.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )

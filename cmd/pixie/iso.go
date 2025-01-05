@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/davejbax/pixie/internal/distro"
 	"github.com/davejbax/pixie/internal/efipe"
 	"github.com/davejbax/pixie/internal/grub"
 	"github.com/davejbax/pixie/internal/iso"
@@ -18,6 +19,19 @@ func newISOCommand(opts *rootOptions) *cobra.Command {
 		Use:   "iso",
 		Short: "Generate bootable ISO images",
 		RunE: func(_ *cobra.Command, _ []string) error {
+			manager, err := distro.NewManager(opts.logger, "./storage", opts.config.Distros)
+			if err != nil {
+				return fmt.Errorf("failed to create distro manager: %w", err)
+			}
+
+			distros, err := manager.Reconcile(2)
+			if err != nil {
+				return fmt.Errorf("failed to reconcile distros: %w", err)
+			}
+
+			// TODO: add distros to ISO
+			_ = distros
+
 			grubImage, cleanup, err := grub.NewImageFromConfig(&opts.config.Grub, "x86_64", "(cd0)")
 			if err != nil {
 				return fmt.Errorf("failed to create GRUB image from config: %w", err)

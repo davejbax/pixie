@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/creasty/defaults"
+	"github.com/davejbax/pixie/internal/distro"
 	"github.com/davejbax/pixie/internal/grub"
 	"github.com/spf13/viper"
 )
@@ -12,6 +13,8 @@ type config struct {
 	TempDir string `mapstructure:"temp_dir"`
 
 	Grub grub.Config
+
+	Distros map[string]*distro.Config
 }
 
 func loadConfig(path string) (*config, error) {
