@@ -19,7 +19,7 @@ func newISOCommand(opts *rootOptions) *cobra.Command {
 		Use:   "iso",
 		Short: "Generate bootable ISO images",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			manager, err := distro.NewManager(opts.logger, "./storage", opts.config.Distros)
+			manager, err := distro.NewManager(opts.logger, opts.config.StorageDir, opts.config.Distros)
 			if err != nil {
 				return fmt.Errorf("failed to create distro manager: %w", err)
 			}

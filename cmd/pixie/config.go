@@ -10,7 +10,8 @@ import (
 )
 
 type config struct {
-	TempDir string `mapstructure:"temp_dir"`
+	TempDir    string `mapstructure:"temp_directory" default:"/var/tmp/pixie"`
+	StorageDir string `mapstructure:"storage_directory" default:"/var/lib/pixie"`
 
 	Grub grub.Config
 

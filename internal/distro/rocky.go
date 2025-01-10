@@ -9,14 +9,17 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
 	"text/template"
+	"time"
 
 	"github.com/Masterminds/semver/v3"
 	"github.com/PuerkitoBio/goquery"
-	"github.com/go-viper/mapstructure/v2"
+	"github.com/davejbax/pixie/internal/iometa"
 )
 
 const (
@@ -25,6 +28,8 @@ const (
 
 	rockyFlavorDVD = "dvd"
 	rockyFlavorNet = "boot"
+
+	bytesInMebibyte = 1024 * 1024
 )
 
 var (
@@ -100,6 +105,8 @@ func (r *rockyProvider) Latest(arches []string) (map[string]downloader, error) {
 		}
 
 		downloaders[arch] = &rockyDownloader{
+			logger:       r.logger,
+			client:       r.client,
 			isoVersion:   isoVersion,
 			isoURL:       isoURL,
 			rockyVersion: rockyVersion,
@@ -266,12 +273,7 @@ func (r *rockyProvider) checksum(isoURL url.URL) ([]byte, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			body = []byte(fmt.Sprintf("(failed to read body: %v)", err))
-		}
-
-		return nil, &httpError{status: resp.StatusCode, body: body, url: isoURL.String()}
+		return nil, newHTTPError(resp)
 	}
 
 	checksum, err := io.ReadAll(resp.Body)
@@ -296,12 +298,7 @@ func (r *rockyProvider) listDirectory(directory *url.URL, regex *regexp.Regexp) 
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			body = []byte(fmt.Sprintf("(failed to read body: %v)", err))
-		}
-
-		return nil, &httpError{status: resp.StatusCode, body: body, url: directory.String()}
+		return nil, newHTTPError(resp)
 	}
 
 	doc, err := goquery.NewDocumentFromReader(resp.Body)
@@ -342,6 +339,8 @@ type rockyMetadata struct {
 }
 
 type rockyDownloader struct {
+	logger       *slog.Logger
+	client       *http.Client
 	checksum     []byte
 	isoVersion   *semver.Version
 	isoURL       *url.URL
@@ -369,18 +368,65 @@ func (d *rockyDownloader) HasDrifted(meta *metadata) (bool, error) {
 }
 
 func (d *rockyDownloader) Download(directory string) (*metadata, error) {
-	// TODO: actually do the download
-	rockyMeta := &rockyMetadata{
-		Test: d.Hash(),
+	isoFile, err := os.OpenFile(filepath.Join(directory, "_rocky_download.iso"), os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+	if err != nil {
+		return nil, fmt.Errorf("could not create output ISO file: %w", err)
+	}
+	defer func() {
+		os.Remove(isoFile.Name())
+	}()
+
+	if err := d.downloadISO(isoFile); err != nil {
+		return nil, fmt.Errorf("failed to download ISO: %w", err)
 	}
 
-	var providerData map[string]interface{}
+	return &metadata{Hash: "TODO", KernelPath: "TODO", InitrdPath: "TODO"}, nil
+}
 
-	if err := mapstructure.Decode(rockyMeta, &providerData); err != nil {
-		return nil, fmt.Errorf("failed to encode metadata: %w", err)
+func (d *rockyDownloader) downloadISO(output io.Writer) error {
+	resp, err := d.client.Get(d.isoURL.String())
+	if err != nil {
+		var urlErr *url.Error
+		if errors.As(err, &urlErr) && (urlErr.Temporary() || urlErr.Timeout()) {
+			return &retryableError{wrapped: err}
+		}
+
+		return fmt.Errorf("GET failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	switch {
+	// Server error -- probably retryable!
+	case resp.StatusCode >= 500 && resp.StatusCode < 600:
+		fallthrough
+	case resp.StatusCode == http.StatusTooManyRequests:
+		return &retryableError{wrapped: newHTTPError(resp)}
+
+	case resp.StatusCode != http.StatusOK:
+		// Otherwise, it's a 4xx, which is our fault and therefore not retryable
+		return newHTTPError(resp)
+	default:
+		// Do nothing
 	}
 
-	return &metadata{Hash: d.Hash(), KernelPath: directory, InitrdPath: directory, ProviderData: providerData}, nil
+	progress := iometa.NewProgressWriter(
+		func(progress float64, written, expected int64) {
+			d.logger.Info("downloading Rocky ISO",
+				"progress", fmt.Sprintf("%0.2f%%", progress*100),
+				"downloaded", fmt.Sprintf("%0.2fMiB", float64(written)/bytesInMebibyte),
+				"total", fmt.Sprintf("%0.2fMiB", float64(expected)/bytesInMebibyte),
+				"url", d.isoURL.String(),
+			)
+		},
+		5*time.Second,
+		resp.ContentLength,
+	)
+
+	if _, err := io.Copy(io.MultiWriter(progress, output), resp.Body); err != nil {
+		return fmt.Errorf("could not read/write ISO: %w", err)
+	}
+
+	return nil
 }
 
 type httpError struct {
@@ -389,6 +435,27 @@ type httpError struct {
 	body   []byte
 }
 
+func newHTTPError(resp *http.Response) *httpError {
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		body = []byte(fmt.Sprintf("(failed to read body: %v)", err))
+	}
+
+	return &httpError{status: resp.StatusCode, body: body, url: resp.Request.URL.String()}
+}
+
 func (h *httpError) Error() string {
 	return fmt.Sprintf("http request to '%s' failed with status %d and body '%s'", h.url, h.status, string(h.body))
+}
+
+type retryableError struct {
+	wrapped error
+}
+
+func (e *retryableError) Error() string {
+	return e.wrapped.Error()
+}
+
+func (e *retryableError) Unwrap() error {
+	return e.wrapped
 }

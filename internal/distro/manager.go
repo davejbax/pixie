@@ -1,5 +1,9 @@
 package distro
 
+// TODO: distro periodic cleanup (just delete hash folders unreferenced by metadata after some expiry period)
+// We'll have to have the periodic cleanup detect if the metadata has been changed (e.g. by the ISO command),
+// and if so, create the new GRUB image and schedule deletion for some expiry period
+
 import (
 	"encoding/json"
 	"errors"
@@ -28,9 +32,7 @@ type Config struct {
 	ProviderOptions map[string]interface{} `mapstructure:",remain"`
 }
 
-var (
-	errUnsupportedProvider = errors.New("unsupported provider")
-)
+var errUnsupportedProvider = errors.New("unsupported provider")
 
 type metadata struct {
 	Hash string
@@ -78,7 +80,7 @@ func NewManager(logger *slog.Logger, storageDirectory string, distros map[string
 				return nil, fmt.Errorf("could not parse provider config for distro '%s': %w", name, err)
 			}
 
-			provider, err := newRocky(logger, config.Version, nil, opts)
+			provider, err := newRocky(logger.With("distro", name), config.Version, nil, opts)
 			if err != nil {
 				return nil, fmt.Errorf("failed to create Rocky provider: %w", err)
 			}

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"time"
 )
 
 var errInvalidWhence = errors.New("invalid whence argument")
@@ -60,4 +61,23 @@ func WriteZeros(w io.Writer, count int) error {
 	}
 
 	return nil
+}
+
+type ProgressReader struct {
+	bytesRead     int64
+	bytesExpected int64
+
+	callback   func(progress float64, read int64, expected int64)
+	cadence    time.Duration
+	lastUpdate *time.Time
+}
+
+func (w *ProgressReader) Read(b []byte) (int, error) {
+	w.bytesRead += int64(len(b))
+
+	if w.lastUpdate == nil || time.Since(*w.lastUpdate) >= w.cadence {
+		w.callback(float64(w.bytesRead)/float64(w.bytesExpected), w.bytesRead, w.bytesExpected)
+	}
+
+	return len(b), nil
 }

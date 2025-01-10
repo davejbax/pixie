@@ -3,6 +3,7 @@ package iometa
 import (
 	"fmt"
 	"io"
+	"time"
 )
 
 type CountingWriter struct {
@@ -24,4 +25,38 @@ func (c *CountingWriter) Write(p []byte) (int, error) {
 
 func (c *CountingWriter) BytesWritten() int {
 	return c.bytesWritten
+}
+
+type ProgressWriter struct {
+	bytesWritten  int64
+	bytesExpected int64
+
+	callback   func(progress float64, written int64, expected int64)
+	cadence    time.Duration
+	lastUpdate time.Time
+}
+
+func NewProgressWriter(callback func(progress float64, written int64, expected int64), cadence time.Duration, bytesExpected int64) *ProgressWriter {
+	return &ProgressWriter{
+		callback:      callback,
+		cadence:       cadence,
+		bytesExpected: bytesExpected,
+		lastUpdate:    time.Now(),
+	}
+}
+
+func (w *ProgressWriter) Write(b []byte) (int, error) {
+	w.bytesWritten += int64(len(b))
+
+	if time.Since(w.lastUpdate) >= w.cadence {
+		progress := float64(0)
+		if w.bytesExpected > 0 {
+			progress = float64(w.bytesWritten) / float64(w.bytesExpected)
+		}
+
+		w.callback(progress, w.bytesWritten, w.bytesExpected)
+		w.lastUpdate = time.Now()
+	}
+
+	return len(b), nil
 }
