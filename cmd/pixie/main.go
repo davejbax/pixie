@@ -28,7 +28,7 @@ type rootOptions struct {
 func newRootCommand() *cobra.Command {
 	opts := &rootOptions{}
 
-	level := logLevelFlag{Level: slog.LevelWarn}
+	level := logLevelFlag{Level: slog.LevelInfo}
 	format := logHandlerFlagText
 	configPath := ""
 

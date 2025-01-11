@@ -5,21 +5,16 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"github.com/Masterminds/semver/v3"
+	"github.com/PuerkitoBio/goquery"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
-	"os"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
 	"text/template"
-	"time"
-
-	"github.com/Masterminds/semver/v3"
-	"github.com/PuerkitoBio/goquery"
-	"github.com/davejbax/pixie/internal/iometa"
 )
 
 const (
@@ -29,7 +24,7 @@ const (
 	rockyFlavorDVD = "dvd"
 	rockyFlavorNet = "boot"
 
-	bytesInMebibyte = 1024 * 1024
+	rockyISODirectory = "isos"
 )
 
 var (
@@ -40,6 +35,7 @@ var (
 	errNoVersionsSatisfyingConstraint = errors.New("could not find any versions satisfying constraint")
 	errNoISOsForArchFlavorCombination = errors.New("could not find any ISOs for the given arch and flavor")
 	errCorruptedMetadata              = errors.New("distro metadata is corrupted")
+	errMirrorHasNoISOs                = errors.New("could not find ISOs directory in mirror for given distribution/version constraints")
 )
 
 type rockyProvider struct {
@@ -54,6 +50,12 @@ type rockyProvider struct {
 type rockyOptions struct {
 	MirrorURL  string `mapstructure:"mirror_url" default:"https://dl.rockylinux.org"`
 	NetInstall bool   `mapstructure:"net_install" default:"false"`
+}
+
+// Vault isn't available from mirrors, hence use the upstream Rocky site for this
+var rockyVaultBase = url.URL{
+	Scheme: "https",
+	Host:   "dl.rockylinux.org",
 }
 
 func newRocky(logger *slog.Logger, versionConstraint string, client *http.Client, opts *rockyOptions) (*rockyProvider, error) {
@@ -86,7 +88,7 @@ func newRocky(logger *slog.Logger, versionConstraint string, client *http.Client
 }
 
 func (r *rockyProvider) Latest(arches []string) (map[string]downloader, error) {
-	rockyVersion, downloadDirectory, err := r.latestVersion()
+	_, downloadDirectory, err := r.latestVersion()
 	if err != nil {
 		return nil, fmt.Errorf("failed to check latest Rocky version: %w", err)
 	}
@@ -94,23 +96,37 @@ func (r *rockyProvider) Latest(arches []string) (map[string]downloader, error) {
 	downloaders := make(map[string]downloader, len(arches))
 
 	for _, arch := range arches {
-		isoVersion, isoURL, err := r.latestISO(downloadDirectory, arch)
+		_, isoURL, err := r.latestISO(downloadDirectory, arch)
 		if err != nil {
 			return nil, fmt.Errorf("failed to find latest ISO for arch '%s': %w", arch, err)
 		}
 
+		// TODO fix this checksum
 		checksum, err := r.checksum(*isoURL)
 		if err != nil {
 			return nil, fmt.Errorf("could not get ISO checksum for arch '%s': %w", arch, err)
 		}
 
-		downloaders[arch] = &rockyDownloader{
-			logger:       r.logger,
-			client:       r.client,
-			isoVersion:   isoVersion,
-			isoURL:       isoURL,
-			rockyVersion: rockyVersion,
-			checksum:     checksum,
+		h := sha256.New()
+		if _, err := h.Write(checksum); err != nil {
+			panic(fmt.Sprintf("failed to compute hash of checksum: %v", err))
+		}
+
+		hash := fmt.Sprintf("%x", h.Sum(nil))
+
+		downloaders[arch] = &isoDownloader{
+			logger: r.logger,
+			client: r.client,
+			url:    isoURL,
+			hash:   hash,
+			metadataMaker: func(directory string) (*metadata, error) {
+				return &metadata{
+					// TODO: probably no need to have the hash in metadata
+					Hash:       hash,
+					InitrdPath: "isolinux/initrd.img",
+					KernelPath: "isolinux/vmlinuz",
+				}, nil
+			},
 		}
 	}
 
@@ -123,19 +139,17 @@ func (r *rockyProvider) latestVersion() (*semver.Version, *url.URL, error) {
 		return nil, nil, fmt.Errorf("failed to list published Rocky versions: %w", err)
 	}
 
-	vaultVersions, err := r.listDirectory(r.mirrorURL.JoinPath(rockyVaultPath), rockyVersionLink)
+	vaultVersions, err := r.listDirectory(rockyVaultBase.JoinPath(rockyVaultPath), rockyVersionLink)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to list archived Rocky versions: %w", err)
 	}
 
-	// Tack the vault versions onto the end, so that we prefer vault versions over pub versions.
-	// This is because the directory listing for pub will include non-latest versions with only
-	// a README linking to vault, whereas vault should include both latest and non-latest versions;
-	// hence, for a given version, it's possible that only the vault URL leads to a valid download directory
+	// Prefer published versions, because these use the (fast!) mirror that the user provides,
+	// and not the (hella slow) Rocky upstream download site
 	pubVersions = append(pubVersions, vaultVersions...)
 
 	var latestVersion *semver.Version
-	var latestEntry *directoryEntry
+	var latestEntries []*directoryEntry
 
 	for _, entry := range pubVersions {
 		version, err := semver.NewVersion(entry.submatch)
@@ -157,15 +171,56 @@ func (r *rockyProvider) latestVersion() (*semver.Version, *url.URL, error) {
 			continue
 		}
 
-		latestVersion = version
-		latestEntry = entry
+		if version.Equal(latestVersion) {
+			latestEntries = append(latestEntries, entry)
+		} else {
+			latestEntries = []*directoryEntry{entry}
+			latestVersion = version
+		}
 	}
 
-	if latestEntry == nil {
+	if latestEntries == nil {
 		return nil, nil, errNoVersionsSatisfyingConstraint
 	}
 
-	return latestVersion, latestEntry.href, nil
+	// Non-current Rocky versions will not have an ISO directory. There's no good way to
+	// check this other than checking whether the ISO directory exists: for non-current
+	// versions, under 'pub/', there will be no ISO directory; under 'vault/', there will
+	// be.
+	// Arguably we could just have checked the latest version that we saw in the listing,
+	// but I don't trust the Rocky maintainers enough to be sure that the latest version
+	// we see in there will be valid and the current version.
+	for _, entry := range latestEntries {
+		hasISOs, err := r.hasISODirectory(entry.href)
+		if err != nil {
+			return nil, nil, fmt.Errorf("error while crawling Rocky mirror for ISO directory: %w", err)
+		}
+
+		// Greedily return here, as the earlier entry in the latestEntries slice will be
+		// from the mirror, and not from the upstream Rocky download site.
+		if hasISOs {
+			return latestVersion, entry.href, nil
+		}
+	}
+
+	return nil, nil, errMirrorHasNoISOs
+}
+
+func (r *rockyProvider) hasISODirectory(base *url.URL) (bool, error) {
+	resp, err := r.client.Get(base.JoinPath(rockyISODirectory).String())
+	if err != nil {
+		return false, fmt.Errorf("failed to get ISO directory: %w", err)
+	}
+	defer resp.Body.Close()
+
+	switch resp.StatusCode {
+	case http.StatusOK:
+		return true, nil
+	case http.StatusNotFound:
+		return false, nil
+	default:
+		return false, newHTTPError(resp)
+	}
 }
 
 func (r *rockyProvider) latestISO(directoryURL *url.URL, arch string) (*semver.Version, *url.URL, error) {
@@ -336,97 +391,6 @@ func (r *rockyProvider) listDirectory(directory *url.URL, regex *regexp.Regexp) 
 
 type rockyMetadata struct {
 	Test string
-}
-
-type rockyDownloader struct {
-	logger       *slog.Logger
-	client       *http.Client
-	checksum     []byte
-	isoVersion   *semver.Version
-	isoURL       *url.URL
-	rockyVersion *semver.Version
-}
-
-func (d *rockyDownloader) Hash() string {
-	h := sha256.New()
-	if _, err := h.Write(d.checksum); err != nil {
-		panic(fmt.Sprintf("failed to compute hash of checksum: %v", err))
-	}
-
-	return fmt.Sprintf("%x", h.Sum(nil))
-}
-
-func (d *rockyDownloader) HasDrifted(meta *metadata) (bool, error) {
-	// var rockyMeta rockyMetadata
-
-	// if err := mapstructure.Decode(meta.providerData, &rockyMeta); err != nil {
-	// 	return false, fmt.Errorf("metadata is corrupt: %w", err)
-	// }
-
-	drifted := meta.Hash != d.Hash()
-	return drifted, nil
-}
-
-func (d *rockyDownloader) Download(directory string) (*metadata, error) {
-	isoFile, err := os.OpenFile(filepath.Join(directory, "_rocky_download.iso"), os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
-	if err != nil {
-		return nil, fmt.Errorf("could not create output ISO file: %w", err)
-	}
-	defer func() {
-		os.Remove(isoFile.Name())
-	}()
-
-	if err := d.downloadISO(isoFile); err != nil {
-		return nil, fmt.Errorf("failed to download ISO: %w", err)
-	}
-
-	return &metadata{Hash: "TODO", KernelPath: "TODO", InitrdPath: "TODO"}, nil
-}
-
-func (d *rockyDownloader) downloadISO(output io.Writer) error {
-	resp, err := d.client.Get(d.isoURL.String())
-	if err != nil {
-		var urlErr *url.Error
-		if errors.As(err, &urlErr) && (urlErr.Temporary() || urlErr.Timeout()) {
-			return &retryableError{wrapped: err}
-		}
-
-		return fmt.Errorf("GET failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	switch {
-	// Server error -- probably retryable!
-	case resp.StatusCode >= 500 && resp.StatusCode < 600:
-		fallthrough
-	case resp.StatusCode == http.StatusTooManyRequests:
-		return &retryableError{wrapped: newHTTPError(resp)}
-
-	case resp.StatusCode != http.StatusOK:
-		// Otherwise, it's a 4xx, which is our fault and therefore not retryable
-		return newHTTPError(resp)
-	default:
-		// Do nothing
-	}
-
-	progress := iometa.NewProgressWriter(
-		func(progress float64, written, expected int64) {
-			d.logger.Info("downloading Rocky ISO",
-				"progress", fmt.Sprintf("%0.2f%%", progress*100),
-				"downloaded", fmt.Sprintf("%0.2fMiB", float64(written)/bytesInMebibyte),
-				"total", fmt.Sprintf("%0.2fMiB", float64(expected)/bytesInMebibyte),
-				"url", d.isoURL.String(),
-			)
-		},
-		5*time.Second,
-		resp.ContentLength,
-	)
-
-	if _, err := io.Copy(io.MultiWriter(progress, output), resp.Body); err != nil {
-		return fmt.Errorf("could not read/write ISO: %w", err)
-	}
-
-	return nil
 }
 
 type httpError struct {
